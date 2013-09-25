@@ -1,0 +1,364 @@
+#!/bin/sh
+
+#
+# Name         : gencnv - generate a conversion program from a csv file
+#
+# Usage        : gencnv <filename>.csv > out.c && h5cc out.c
+#
+# Arguments    : filename - a csv file
+#
+# Description  : gencnv generates a C program which when compiled will
+#                create an hdf5 data file from a file 
+#
+# Notes        : Next iteration will bulk append and will handle directories
+#
+# External 
+# Interfaces   : compile the resultant code with h5cc filename.c 
+#
+# See Also     : h5cc
+#
+# Owner        : Graeme Burnett 
+#
+# Perms        : Production: 0550 Dev: 0700
+#
+# Status       : Initial version
+#
+
+awk -F',' 'BEGIN {
+    lineno = 1;
+
+    field_names[0] = "";
+    field_types[0] = "";
+    field_lengths[0];
+    typedef_Ccode[0] = "";
+
+    ObjectName = "";
+    NumberOfFields = 0;
+}
+
+function makeObjectTypedef()
+{
+    # Build the data object based on the discovered types
+
+    typedef_Ccode[0] = "typedef struct {\n";
+
+    # Get rid of double quotes 
+
+    # Parse the record values by type
+    for( i = 1; i <= NF; i++)
+    {
+	if ($i ~ /^[[:digit:]][[:digit:]]*$/) # All digits?
+	{
+	    field_types[i] = "H5T_NATIVE_INT";
+	    typedef_Ccode[i] = sprintf("    long %s;\n", field_names[ i ]);
+	}
+	else if ($i ~ /[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}/ ||  # A date? for now treat as a string 
+	    $0 ~ /[[:alpha:]]+/) # Any alpha characters make this a string
+	{
+	    len = length($i) + 1;
+	    field_types[ i ] = sprintf("string_type%02d", i);
+	    field_lengths[ i ] = len;
+	    typedef_Ccode[i] = sprintf("    char %s[%d];\n", field_names[ i ], len);
+	}
+	# A Float? this is mkt data - not scientific hence float
+	else if ($i ~ /^[[:digit:]][[:digit:]]*\.[[:digit:]][[:digit:]]*$/) # All digits with a period?
+	{
+	    field_types[i] = "H5T_NATIVE_FLOAT";
+	    typedef_Ccode[i] = sprintf("    float %s;\n", field_names[ i ]);
+	}
+	else
+	{
+	    printf("Unknown field type [%s]\n", $i);
+	    exit
+	}
+    }
+    typedef_Ccode[ i + 1 ] = sprintf("} %s;\n\n", ObjectName);
+}
+
+function emitTypedef(a, n)
+{
+    for(i = 0; i <= n; i++)
+    {
+        printf("%s", a[i]);
+    }
+    printf("} %s;\n\n", ObjectName);
+}
+
+function makeFieldNamesAndObject(str)
+{
+    n = split(FILENAME, a, "/");
+    sub(/\.csv/, "", a[n]);
+    sub(/\.txt/, "", a[n]);
+    gsub(/[ \t]+/, "", a[n]);
+    gsub(/[\.]+/, "", a[n])
+    gsub(/[-]+/, "", a[n]);
+    gsub(/^[[:digit:]]*/, "", a[n]);
+    gsub(/[[:digit:]]*$/, "", a[n]);
+    ObjectName = a[n];
+
+    for( i = 1; i <= NF; i++)
+    {
+	gsub(/[ \t]+/, "")
+	field_names[ i ] = $i;
+    }
+}
+
+function emitFieldTypes(ft, fl, cs)
+{
+    printf("\n\n");
+
+    for( i = 0; i < NF; i++)
+    {
+    	if(ft[i + 1] ~ /string_type[0-9][0-9]*/)
+	{
+            printf("    hid_t      %s;\n", ft[i + 1]);
+	}
+    }
+
+    printf("    hid_t      field_type[%d];\n", NF);
+    printf("    hid_t      file_id;\n");
+    printf("    hsize_t    chunk_size = %d;\n", cs);
+    printf("    int        *fill_data = NULL;\n");
+    printf("    int        compress  = 0;\n");
+    printf("    herr_t     status;\n");
+    printf("    int        i;\n");
+
+    printf("\n\n");
+
+    # Emit the string sizes first otherwise field types are meaningless
+
+    for( i = 0; i < NF; i++)
+    {
+    	if(ft[ i + 1] ~ /string_type[0-9][0-9]*/)
+	{
+            printf("    %s = H5Tcopy( H5T_C_S1 );\n", ft[ i + 1]);
+            printf("    H5Tset_size( %s, %d );\n", ft[ i + 1], fl[ i+1 ]);
+	}
+    }
+    printf("\n");
+
+    for( i = 0; i <= NF - 1; i++)
+    {
+	printf("    field_type[%d] = %s;\n", i, ft[ i + 1]);
+    }
+
+    printf("\n");
+}
+
+function createTable(tn) {
+
+    printf("\n");
+    printf("    /* Create a new file using default properties. */\n\n");
+    printf("    file_id = H5Fcreate( \"%s.h5\", H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);\n", tn);
+}
+
+function emitFieldInfo(fn)
+{
+    printf("\n    /* Define field information */\n");
+
+    printf("    const char *field_names[%s] = {\n", NF);
+
+    for( i = 1; i <= NF; i++)
+    {
+	if( i == NF)
+	{
+	    printf("\t\"%s\"\n    };\n", fn[i]);
+	}
+	else
+	{
+	    printf("\t\"%s\",\n", fn[i]);
+	}
+    }
+}
+
+function closeFileandTypes(ft)
+{
+    printf("    /* close type */\n");
+
+    for( i = 0; i < NF - 1; i++)
+    {
+        if(ft[i + 1] ~ /string_type[0-9][0-9]*/)
+	{
+	    printf("    H5Fclose(%s);\n", ft[i + 1]);
+	}
+    }
+
+    printf("\n    /* close the file */\n");
+    printf("    H5Fclose( file_id );\n");
+
+}
+
+function endMain(e)
+{
+    printf("    exit(%d);\n}", e);
+}
+
+function emitMain()
+{
+    printf("int main( void )\n{\n");
+}
+
+function emitHeaders()
+{
+    printf("#include \"hdf5.h\"\n");
+    printf("#include \"hdf5_hl.h\"\n");
+    print "#include <stdlib.h>";
+    print "#include <stdio.h>";
+    print "#include <string.h>";
+}
+
+
+function emitOffsets(fn, on)
+{
+    printf("    /* Calculate the size and the offsets of our struct members in memory */\n\n");
+    printf("    size_t dst_size =  sizeof( %s );\n\n", on);
+    printf("    size_t dst_offset[ NFIELDS ] = {\n");
+
+    for( i = 1; i <= NF; i++)
+    {
+        if( i == NF)
+	{
+	    printf("        HOFFSET( %s, %s )\n", on, fn[ i ]);
+	    printf("    };\n\n");
+	}
+	else
+	{
+	    printf("        HOFFSET( %s, %s ),\n", on, fn[ i ]);
+	}
+    }
+}
+
+function emitSizes(fn)
+{
+    printf("    size_t dst_sizes[NFIELDS] = {\n"); 
+
+    for( i = 1; i <= NF; i++)
+    {
+        if( i == NF)
+	{
+	    printf("\tsizeof( dst_buf.%s)\n", fn[ i ]);
+	    printf("    };\n");
+	}
+	else
+	{
+	    printf("\tsizeof( dst_buf.%s),\n", fn[ i ]);
+	}
+    }
+}
+
+function emitNumberOfFields(n)
+{
+    printf("#define NFIELDS  (hsize_t)  %d\n", n);
+}
+
+function makeTable(on)
+{
+    printf("    status = H5TBmake_table( \"%s\", file_id, \"%s\", \n", on, on); 
+    printf("                NFIELDS, NRECORDS, dst_size, field_names, dst_offset, field_type,\n");
+    printf("                chunk_size, fill_data, compress, (void *)NULL);\n");
+}
+
+function emitVars(on)
+{
+    printf("    int field;\n")
+    printf("    char buf[1024];\n")
+    printf("    %s dst_buf;\n", on)
+    printf("    int first = 1;\n")
+    printf("    char *word;\n")
+    printf("    FILE *fp;\n\n")
+}
+
+function appendData(fn, ft, on)
+{
+    printf("\n    fp = fopen(\"%s\", \"r\");\n\n", FILENAME);
+    printf("    while(fgets((char *)&buf, 1024, fp) != NULL)\n");
+    printf("    {\n");
+    printf("        if(first)\n");
+    printf("        {\n");
+    printf("            first = 0;\n");
+    printf("            continue;\n");
+    printf("        }\n");
+    printf("        for (field = 1, word = strtok(buf, \",\"); word; field++, word = strtok(NULL, \",\"))\n");
+    printf("        {\n");
+    printf("            switch(field)\n");
+    printf("            {\n");
+
+    for( i = 1; i <= NF; i++)
+    {
+        printf("                case %d:\n", i);
+
+        if(ft[i] ~ /string_type[0-9][0-9]*/)
+	{
+	    printf("                strcpy(dst_buf.%s, word);\n", fn[i]);
+	}
+	else if(ft[i] ~ /.*FLOAT/)
+	{
+	    printf("                    dst_buf.%s = atof(word);\n", fn[i]);
+	}
+	else if(ft[i] ~ /.*INT/)
+	{
+	    printf("                    dst_buf.%s = atol(word);\n", fn[i]);
+	}
+
+        printf("                    break;\n");
+    }
+
+    printf("            } /* end switch */\n");
+    printf("        } /* end for */\n");
+
+    printf("        status = H5TBappend_records(file_id, \"%s\", 1, dst_size, dst_offset, dst_sizes, &dst_buf);\n", on); 
+
+    printf("    } /* end while */\n\n");
+}
+
+{ # main
+    gsub(//,""); # Get rid of windoze ctrl chars
+    gsub(/	/,","); # Change tabs into commas 
+    gsub(/"/, ""); # unquote strings
+
+    if(lineno == 1)
+    {
+    	NumberOfFields = NF;
+
+	makeFieldNamesAndObject($0);
+
+	lineno++;
+
+    } else if(lineno == 2)
+    {
+    	makeObjectTypedef();
+
+	lineno++;
+
+    }
+    else
+    {
+    }
+}
+END {
+
+    emitHeaders();
+
+    emitNumberOfFields(NumberOfFields);
+    printf("\n#define NRECORDS  (hsize_t)  %d\n\n", NR);
+    emitTypedef(typedef_Ccode, NumberOfFields);
+
+    emitMain();
+
+    emitVars(ObjectName);
+    emitOffsets(field_names, ObjectName);
+    emitSizes(field_names);
+    emitFieldInfo(field_names);
+    emitFieldTypes(field_types, field_lengths, 10);
+
+    createTable(ObjectName);
+    makeTable(ObjectName);
+
+    appendData(field_names, field_types, ObjectName);
+
+    closeFileandTypes(field_types);
+    endMain(0);
+
+}' $1 
+
+exit $?

@@ -1,29 +1,5 @@
 #!/bin/sh
 
-#
-# Name         : gencnv - generate a conversion program from a csv file
-#
-# Usage        : gencnv <filename>.csv > out.c && h5cc out.c
-#
-# Arguments    : filename - a csv file
-#
-# Description  : gencnv generates a C program which when compiled will
-#                create an hdf5 data file from a file 
-#
-# Notes        : Next iteration will bulk append and will handle directories
-#
-# External 
-# Interfaces   : compile the resultant code with h5cc filename.c 
-#
-# See Also     : h5cc
-#
-# Owner        : Graeme Burnett 
-#
-# Perms        : Production: 0550 Dev: 0700
-#
-# Status       : Initial version
-#
-
 awk -F',' 'BEGIN {
     lineno = 1;
 
@@ -53,7 +29,7 @@ function makeObjectTypedef()
 	    typedef_Ccode[i] = sprintf("    long %s;\n", field_names[ i ]);
 	}
 	else if ($i ~ /[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}/ ||  # A date? for now treat as a string 
-	    $0 ~ /[[:alpha:]]+/) # Any alpha characters make this a string
+	    $i ~ /[[:alpha:]]+/) # Any alpha characters make this a string
 	{
 	    len = length($i) + 1;
 	    field_types[ i ] = sprintf("string_type%02d", i);
@@ -313,7 +289,7 @@ function appendData(fn, ft, on)
 
 { # main
     gsub(//,""); # Get rid of windoze ctrl chars
-    gsub(/	/,","); # Change tabs into commas 
+    gsub(/	/, ","); # Change tabs into commas 
     gsub(/"/, ""); # unquote strings
 
     if(lineno == 1)
@@ -360,5 +336,3 @@ END {
     endMain(0);
 
 }' $1 
-
-exit $?
